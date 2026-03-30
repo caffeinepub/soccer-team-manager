@@ -26,8 +26,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FolderOpen, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import {
+  FolderOpen,
+  GripVertical,
+  Loader2,
+  Plus,
+  Save,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import type { MatchId, Player, TemplateId } from "../backend";
 import {
@@ -41,7 +50,17 @@ import {
 } from "../hooks/useQueries";
 import { FORMATIONS, FORMATION_SLOTS, type PlacedPlayer } from "../types";
 
-type DragState = {
+// ─── Name helper ────────────────────────────────────────────────────────────
+function splitName(fullName: string) {
+  const parts = fullName.trim().split(" ");
+  const first = parts[0] ?? "";
+  const lastInitial =
+    parts.length > 1 ? `${parts[parts.length - 1][0] ?? ""}.` : "";
+  return { first, lastInitial };
+}
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+type PitchDragState = {
   playerId: string;
   startClientX: number;
   startClientY: number;
@@ -49,8 +68,18 @@ type DragState = {
   origY: number;
 } | null;
 
+type ListDragState = {
+  playerId: string;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  isDragging: boolean;
+} | null;
+
 const PITCH_BANDS = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 
+// ─── Main component ──────────────────────────────────────────────────────────
 export default function LineupTab() {
   const { data: players, isLoading: playersLoading } = useGetPlayers();
   const { data: matches } = useGetMatches();
@@ -75,10 +104,19 @@ export default function LineupTab() {
   );
   const [templateName, setTemplateName] = useState("");
 
-  const pitchRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<DragState>(null);
-  const wasDragging = useRef(false);
+  // Drag ghost state for list→pitch drag
+  const [ghostState, setGhostState] = useState<{
+    x: number;
+    y: number;
+    player: Player;
+  } | null>(null);
 
+  const pitchRef = useRef<HTMLDivElement>(null);
+  const pitchDragState = useRef<PitchDragState>(null);
+  const wasPitchDragging = useRef(false);
+  const listDragState = useRef<ListDragState>(null);
+
+  // ── Match/availability filters ────────────────────────────────────────────
   const matchId: MatchId | null =
     matchContextId !== "none" ? BigInt(matchContextId) : null;
   const { data: availabilityIds } = useGetMatchAvailability(matchId);
@@ -100,6 +138,7 @@ export default function LineupTab() {
     (p) => !placedIds.has(p.id.toString()) && !benchIds.has(p.id.toString()),
   );
 
+  // ── Formation init ────────────────────────────────────────────────────────
   const applyFormation = useCallback((newFormation: string) => {
     const slots = FORMATION_SLOTS[newFormation] ?? FORMATION_SLOTS["4-4-2"];
     setPlacedPlayers((prev) =>
@@ -131,12 +170,13 @@ export default function LineupTab() {
     applyFormation(f);
   };
 
+  // ── Pitch click (tap-to-place fallback) ───────────────────────────────────
   const handlePitchClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (wasDragging.current) {
-      wasDragging.current = false;
+    if (wasPitchDragging.current) {
+      wasPitchDragging.current = false;
       return;
     }
-    if (dragState.current) return;
+    if (pitchDragState.current) return;
     if (!selectedPlayerId) return;
     const target = e.target as HTMLElement;
     if (target.closest(".player-marker")) return;
@@ -145,8 +185,14 @@ export default function LineupTab() {
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
 
+    placePlayerAtPitchCoords(selectedPlayerId, x, y);
+    setSelectedPlayerId(null);
+  };
+
+  // ── Shared place-at-coords logic ─────────────────────────────────────────
+  const placePlayerAtPitchCoords = (pid: string, x: number, y: number) => {
     let closestEmptySlot: number | null = null;
-    let closestDist = 10;
+    let closestDist = 15; // 15% snap radius
     placedPlayers.forEach((slot, i) => {
       if (slot.playerId === "") {
         const dx = slot.x - x;
@@ -164,34 +210,32 @@ export default function LineupTab() {
         const updated = [...prev];
         updated[closestEmptySlot!] = {
           ...updated[closestEmptySlot!],
-          playerId: selectedPlayerId,
+          playerId: pid,
         };
         return updated;
       });
     } else {
-      const player = availablePlayers.find(
-        (p) => p.id.toString() === selectedPlayerId,
-      );
+      const player = availablePlayers.find((p) => p.id.toString() === pid);
       if (!player) return;
       setPlacedPlayers((prev) => [
         ...prev,
         {
-          playerId: selectedPlayerId,
+          playerId: pid,
           x: Math.max(5, Math.min(95, x)),
           y: Math.max(5, Math.min(95, y)),
           slotLabel: player.positions[0] ?? "MID",
         },
       ]);
     }
-    setSelectedPlayerId(null);
   };
 
+  // ── Pitch marker drag (reposition existing player) ────────────────────────
   const handleMarkerPointerDown = (e: React.PointerEvent, idx: number) => {
     e.stopPropagation();
     const slot = placedPlayers[idx];
     if (!slot || slot.playerId === "") return;
     pitchRef.current?.setPointerCapture(e.pointerId);
-    dragState.current = {
+    pitchDragState.current = {
       playerId: slot.playerId,
       startClientX: e.clientX,
       startClientY: e.clientY,
@@ -200,21 +244,21 @@ export default function LineupTab() {
     };
   };
 
-  const handleMarkerPointerMove = (e: React.PointerEvent) => {
-    if (!dragState.current) return;
+  const handlePitchPointerMove = (e: React.PointerEvent) => {
+    if (!pitchDragState.current) return;
     const pitch = pitchRef.current;
     if (!pitch) return;
     const rect = pitch.getBoundingClientRect();
     const idx = placedPlayers.findIndex(
-      (p) => p.playerId === dragState.current!.playerId,
+      (p) => p.playerId === pitchDragState.current!.playerId,
     );
     if (idx === -1) return;
     const dx =
-      ((e.clientX - dragState.current.startClientX) / rect.width) * 100;
+      ((e.clientX - pitchDragState.current.startClientX) / rect.width) * 100;
     const dy =
-      ((e.clientY - dragState.current.startClientY) / rect.height) * 100;
-    const newX = Math.max(4, Math.min(96, dragState.current.origX + dx));
-    const newY = Math.max(4, Math.min(96, dragState.current.origY + dy));
+      ((e.clientY - pitchDragState.current.startClientY) / rect.height) * 100;
+    const newX = Math.max(4, Math.min(96, pitchDragState.current.origX + dx));
+    const newY = Math.max(4, Math.min(96, pitchDragState.current.origY + dy));
     setPlacedPlayers((prev) => {
       const updated = [...prev];
       updated[idx] = { ...updated[idx], x: newX, y: newY };
@@ -222,13 +266,93 @@ export default function LineupTab() {
     });
   };
 
-  const handleMarkerPointerUp = () => {
-    if (dragState.current) {
-      wasDragging.current = true;
-      dragState.current = null;
+  const handlePitchPointerUp = () => {
+    if (pitchDragState.current) {
+      wasPitchDragging.current = true;
+      pitchDragState.current = null;
     }
   };
 
+  // ── List drag: drag from squad list onto pitch ────────────────────────────
+  const handleListPointerDown = (
+    e: React.PointerEvent<HTMLElement>,
+    player: Player,
+  ) => {
+    // Only primary pointer (not right-click)
+    if (e.button !== 0 && e.button !== undefined) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    listDragState.current = {
+      playerId: player.id.toString(),
+      startX: e.clientX,
+      startY: e.clientY,
+      currentX: e.clientX,
+      currentY: e.clientY,
+      isDragging: false,
+    };
+  };
+
+  const handleListPointerMove = (
+    e: React.PointerEvent<HTMLElement>,
+    player: Player,
+  ) => {
+    if (
+      !listDragState.current ||
+      listDragState.current.playerId !== player.id.toString()
+    )
+      return;
+    const dx = e.clientX - listDragState.current.startX;
+    const dy = e.clientY - listDragState.current.startY;
+    if (!listDragState.current.isDragging && Math.sqrt(dx * dx + dy * dy) > 5) {
+      listDragState.current.isDragging = true;
+    }
+    if (listDragState.current.isDragging) {
+      listDragState.current.currentX = e.clientX;
+      listDragState.current.currentY = e.clientY;
+      setGhostState({
+        x: e.clientX,
+        y: e.clientY,
+        player,
+      });
+    }
+  };
+
+  const handleListPointerUp = (
+    e: React.PointerEvent<HTMLElement>,
+    player: Player,
+  ) => {
+    const state = listDragState.current;
+    if (!state || state.playerId !== player.id.toString()) return;
+
+    const wasDragging = state.isDragging;
+    listDragState.current = null;
+    setGhostState(null);
+
+    if (wasDragging) {
+      // Check if pointer is over the pitch
+      const pitch = pitchRef.current;
+      if (pitch) {
+        const rect = pitch.getBoundingClientRect();
+        if (
+          e.clientX >= rect.left &&
+          e.clientX <= rect.right &&
+          e.clientY >= rect.top &&
+          e.clientY <= rect.bottom
+        ) {
+          const x = ((e.clientX - rect.left) / rect.width) * 100;
+          const y = ((e.clientY - rect.top) / rect.height) * 100;
+          placePlayerAtPitchCoords(player.id.toString(), x, y);
+          return;
+        }
+      }
+    } else {
+      // Tap: toggle select
+      setSelectedPlayerId((prev) =>
+        prev === player.id.toString() ? null : player.id.toString(),
+      );
+    }
+  };
+
+  // ── Pitch actions ─────────────────────────────────────────────────────────
   const removePlayerFromPitch = (idx: number) => {
     setPlacedPlayers((prev) => {
       const updated = [...prev];
@@ -258,6 +382,7 @@ export default function LineupTab() {
     setBenchPlayerIds((prev) => [...prev, playerId]);
   };
 
+  // ── Template save/load/delete ─────────────────────────────────────────────
   const handleSaveTemplate = async () => {
     if (!templateName.trim()) {
       toast.error("Please enter a template name");
@@ -360,6 +485,7 @@ export default function LineupTab() {
     }
   };
 
+  // ── Loading state ─────────────────────────────────────────────────────────
   if (playersLoading) {
     return (
       <div className="space-y-3" data-ocid="lineup.loading_state">
@@ -381,6 +507,17 @@ export default function LineupTab() {
 
   return (
     <div>
+      {/* Drag ghost portal */}
+      {ghostState &&
+        createPortal(
+          <DragGhost
+            x={ghostState.x}
+            y={ghostState.y}
+            player={ghostState.player}
+          />,
+          document.body,
+        )}
+
       {/* Top controls */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <div className="flex-1 min-w-0">
@@ -477,7 +614,7 @@ export default function LineupTab() {
         ))}
       </div>
 
-      {/* Main layout: pitch + sidebar */}
+      {/* Main layout: pitch + squad list */}
       <div className="flex flex-col lg:flex-row gap-4">
         {/* Pitch */}
         <div className="flex-shrink-0 w-full lg:w-[320px]">
@@ -487,17 +624,17 @@ export default function LineupTab() {
             className="relative pitch-container rounded-xl overflow-hidden cursor-crosshair"
             style={{ aspectRatio: "2/3" }}
             onClick={handlePitchClick}
-            onPointerMove={handleMarkerPointerMove}
-            onPointerUp={handleMarkerPointerUp}
+            onPointerMove={handlePitchPointerMove}
+            onPointerUp={handlePitchPointerUp}
+            tabIndex={-1}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ")
                 handlePitchClick(
                   e as unknown as React.MouseEvent<HTMLDivElement>,
                 );
             }}
-            tabIndex={-1}
           >
-            {/* SVG Pitch */}
+            {/* SVG Pitch markings */}
             <svg
               viewBox="0 0 100 150"
               xmlns="http://www.w3.org/2000/svg"
@@ -652,7 +789,9 @@ export default function LineupTab() {
                     top: `${slot.y}%`,
                     transform: "translate(-50%, -50%)",
                     zIndex:
-                      dragState.current?.playerId === slot.playerId ? 20 : 10,
+                      pitchDragState.current?.playerId === slot.playerId
+                        ? 20
+                        : 10,
                   }}
                   onPointerDown={(e) => handleMarkerPointerDown(e, idx)}
                 >
@@ -671,7 +810,9 @@ export default function LineupTab() {
                   ) : (
                     <EmptySlot
                       label={slot.slotLabel}
-                      isTarget={selectedPlayerId !== null}
+                      isTarget={
+                        selectedPlayerId !== null || ghostState !== null
+                      }
                     />
                   )}
                 </div>
@@ -693,43 +834,50 @@ export default function LineupTab() {
                 BENCH ({benchPlayers.length})
               </p>
               <div className="flex gap-2 flex-wrap">
-                {benchPlayers.map((player, idx) => (
-                  <button
-                    key={player.id.toString()}
-                    type="button"
-                    data-ocid={`lineup.bench.item.${idx + 1}`}
-                    onClick={() => movePlayerToUnassigned(player.id.toString())}
-                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-all hover:opacity-80"
-                    style={{
-                      background: "oklch(0.20 0.04 240)",
-                      border: "1px solid oklch(0.27 0.04 240)",
-                    }}
-                    title="Remove from bench"
-                  >
-                    <div
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                {benchPlayers.map((player, idx) => {
+                  const { first, lastInitial } = splitName(player.name);
+                  return (
+                    <button
+                      key={player.id.toString()}
+                      type="button"
+                      data-ocid={`lineup.bench.item.${idx + 1}`}
+                      onClick={() =>
+                        movePlayerToUnassigned(player.id.toString())
+                      }
+                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-all hover:opacity-80"
                       style={{
-                        background: "oklch(0.73 0.1 75)",
-                        color: "oklch(0.12 0.03 240)",
+                        background: "oklch(0.20 0.04 240)",
+                        border: "1px solid oklch(0.27 0.04 240)",
                       }}
+                      title="Remove from bench"
                     >
-                      {player.jerseyNumber.toString()}
-                    </div>
-                    <span className="text-xs text-foreground font-medium">
-                      {player.name.split(" ")[0]}
-                    </span>
-                  </button>
-                ))}
+                      <div
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                        style={{
+                          background: "oklch(0.73 0.1 75)",
+                          color: "oklch(0.12 0.03 240)",
+                        }}
+                      >
+                        {player.jerseyNumber.toString()}
+                      </div>
+                      <span className="text-xs text-foreground font-medium">
+                        {first}
+                        {lastInitial ? ` ${lastInitial}` : ""}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
         </div>
 
-        {/* Sidebar: unassigned players */}
+        {/* Squad list sidebar */}
         <div className="flex-1 min-w-0">
+          {/* Selected player hint */}
           {selectedPlayerId && (
             <div
-              className="mb-3 px-3 py-2 rounded-lg flex items-center gap-2 animate-pulse-gold"
+              className="mb-3 px-3 py-2 rounded-lg flex items-center gap-2"
               style={{
                 background: "oklch(0.73 0.1 75 / 0.1)",
                 border: "1px solid oklch(0.73 0.1 75 / 0.4)",
@@ -744,10 +892,12 @@ export default function LineupTab() {
                 style={{ color: "oklch(0.73 0.1 75)" }}
               >
                 {
-                  players?.find((p) => p.id.toString() === selectedPlayerId)
-                    ?.name
+                  splitName(
+                    players?.find((p) => p.id.toString() === selectedPlayerId)
+                      ?.name ?? "",
+                  ).first
                 }{" "}
-                — tap pitch to place
+                &mdash; tap pitch to place
               </span>
               <button
                 type="button"
@@ -764,91 +914,149 @@ export default function LineupTab() {
             style={{ background: "oklch(0.17 0.04 240)" }}
           >
             <p
-              className="text-xs font-semibold mb-2"
+              className="text-xs font-semibold mb-3"
               style={{ color: "oklch(0.68 0.03 240)" }}
             >
               SQUAD ({unassignedPlayers.length} unassigned)
             </p>
+
             {unassignedPlayers.length === 0 ? (
               <p
-                className="text-xs py-3 text-center"
+                className="text-xs py-4 text-center"
                 style={{ color: "oklch(0.55 0.03 240)" }}
                 data-ocid="lineup.empty_state"
               >
                 All available players are placed
               </p>
             ) : (
-              <div className="space-y-1.5" data-ocid="lineup.players.list">
-                {unassignedPlayers.map((player, idx) => (
-                  <div
-                    key={player.id.toString()}
-                    className="flex items-center gap-2"
-                  >
-                    <button
-                      type="button"
+              <div className="space-y-2" data-ocid="lineup.players.list">
+                {unassignedPlayers.map((player, idx) => {
+                  const { first, lastInitial } = splitName(player.name);
+                  const isSelected = selectedPlayerId === player.id.toString();
+                  return (
+                    <div
+                      key={player.id.toString()}
+                      className="flex items-center gap-2"
                       data-ocid={`lineup.player.item.${idx + 1}`}
-                      onClick={() =>
-                        setSelectedPlayerId((prev) =>
-                          prev === player.id.toString()
-                            ? null
-                            : player.id.toString(),
-                        )
-                      }
-                      className="flex-1 flex items-center gap-2.5 px-3 py-2 rounded-lg text-left transition-all"
-                      style={{
-                        background:
-                          selectedPlayerId === player.id.toString()
-                            ? "oklch(0.73 0.1 75 / 0.15)"
-                            : "oklch(0.20 0.04 240)",
-                        border:
-                          selectedPlayerId === player.id.toString()
-                            ? "1px solid oklch(0.73 0.1 75 / 0.5)"
-                            : "1px solid oklch(0.27 0.04 240)",
-                      }}
                     >
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
+                      {/* Draggable player card */}
+                      <button
+                        type="button"
+                        onPointerDown={(e) => handleListPointerDown(e, player)}
+                        onPointerMove={(e) => handleListPointerMove(e, player)}
+                        onPointerUp={(e) => handleListPointerUp(e, player)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            setSelectedPlayerId((prev) =>
+                              prev === player.id.toString()
+                                ? null
+                                : player.id.toString(),
+                            );
+                          }
+                        }}
+                        className="flex-1 flex items-center gap-3 px-3 rounded-xl transition-all select-none"
                         style={{
-                          background:
-                            selectedPlayerId === player.id.toString()
-                              ? "oklch(0.73 0.1 75)"
-                              : "oklch(0.25 0.04 240)",
-                          color:
-                            selectedPlayerId === player.id.toString()
-                              ? "oklch(0.12 0.03 240)"
-                              : "oklch(0.73 0.1 75)",
+                          minHeight: 56,
+                          background: isSelected
+                            ? "oklch(0.73 0.1 75 / 0.12)"
+                            : "oklch(0.20 0.04 240)",
+                          border: isSelected
+                            ? "2px solid oklch(0.73 0.1 75)"
+                            : "1.5px solid oklch(0.27 0.04 240)",
+                          cursor: "grab",
+                          touchAction: "none",
                         }}
                       >
-                        {player.jerseyNumber.toString()}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">
-                          {player.name}
-                        </p>
-                        <p
-                          className="text-xs truncate"
-                          style={{ color: "oklch(0.55 0.03 240)" }}
+                        {/* Grip handle */}
+                        <GripVertical
+                          size={16}
+                          style={{
+                            color: "oklch(0.45 0.03 240)",
+                            flexShrink: 0,
+                          }}
+                        />
+
+                        {/* Jersey number */}
+                        <div
+                          className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-black"
+                          style={{
+                            background: isSelected
+                              ? "oklch(0.73 0.1 75)"
+                              : "oklch(0.12 0.03 240)",
+                            color: isSelected
+                              ? "oklch(0.12 0.03 240)"
+                              : "oklch(0.73 0.1 75)",
+                            border: isSelected
+                              ? "none"
+                              : "1.5px solid oklch(0.73 0.1 75 / 0.4)",
+                          }}
                         >
-                          {player.positions.join(", ")}
-                        </p>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      data-ocid={`lineup.bench.add.${idx + 1}`}
-                      onClick={() => addPlayerToBench(player.id.toString())}
-                      className="p-2 rounded-lg transition-all"
-                      style={{
-                        background: "oklch(0.20 0.04 240)",
-                        border: "1px solid oklch(0.27 0.04 240)",
-                        color: "oklch(0.55 0.04 240)",
-                      }}
-                      title="Add to bench"
-                    >
-                      <Plus size={12} />
-                    </button>
-                  </div>
-                ))}
+                          {player.jerseyNumber.toString()}
+                        </div>
+
+                        {/* Name + position */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-1.5">
+                            <span
+                              className="font-bold truncate"
+                              style={{
+                                fontSize: 16,
+                                color: "oklch(0.94 0.01 240)",
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              {first}
+                            </span>
+                            {lastInitial && (
+                              <span
+                                style={{
+                                  fontSize: 13,
+                                  color: "oklch(0.65 0.03 240)",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                {lastInitial}
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className="text-xs"
+                            style={{ color: "oklch(0.55 0.03 240)" }}
+                          >
+                            {player.positions.join(", ")}
+                          </span>
+                        </div>
+
+                        {isSelected && (
+                          <span
+                            className="text-xs font-semibold flex-shrink-0"
+                            style={{ color: "oklch(0.73 0.1 75)" }}
+                          >
+                            Selected
+                          </span>
+                        )}
+                      </button>
+
+                      {/* Add to bench button */}
+                      <button
+                        type="button"
+                        data-ocid={`lineup.bench.add.${idx + 1}`}
+                        onClick={() => addPlayerToBench(player.id.toString())}
+                        className="p-2.5 rounded-xl transition-all flex-shrink-0"
+                        style={{
+                          background: "oklch(0.20 0.04 240)",
+                          border: "1.5px solid oklch(0.27 0.04 240)",
+                          color: "oklch(0.55 0.04 240)",
+                          minWidth: 40,
+                          minHeight: 56,
+                        }}
+                        title="Add to bench"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1033,6 +1241,67 @@ export default function LineupTab() {
   );
 }
 
+// ─── Drag Ghost ──────────────────────────────────────────────────────────────
+function DragGhost({ x, y, player }: { x: number; y: number; player: Player }) {
+  const { first, lastInitial } = splitName(player.name);
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: x,
+        top: y,
+        transform: "translate(-50%, -50%)",
+        pointerEvents: "none",
+        zIndex: 9999,
+        opacity: 0.92,
+      }}
+    >
+      <div
+        style={{
+          background: "oklch(0.73 0.1 75)",
+          color: "oklch(0.12 0.03 240)",
+          borderRadius: 12,
+          padding: "6px 12px",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+          minWidth: 80,
+        }}
+      >
+        <div
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: "50%",
+            background: "oklch(0.12 0.03 240)",
+            color: "oklch(0.73 0.1 75)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 12,
+            fontWeight: 900,
+            flexShrink: 0,
+          }}
+        >
+          {player.jerseyNumber.toString()}
+        </div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.1 }}>
+            {first}
+          </div>
+          {lastInitial && (
+            <div style={{ fontSize: 11, fontWeight: 500, opacity: 0.7 }}>
+              {lastInitial}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── FilledMarker ────────────────────────────────────────────────────────────
 function FilledMarker({
   player,
   onRemove,
@@ -1043,11 +1312,12 @@ function FilledMarker({
   onBench: (e: React.MouseEvent) => void;
 }) {
   const [showActions, setShowActions] = useState(false);
+  const { first, lastInitial } = splitName(player.name);
 
   return (
     <div
       className="relative select-none"
-      style={{ width: 44, textAlign: "center" }}
+      style={{ width: 52, textAlign: "center" }}
     >
       {showActions && (
         <div
@@ -1086,12 +1356,14 @@ function FilledMarker({
 
       <button
         type="button"
-        className="w-11 h-11 rounded-full flex items-center justify-center mx-auto transition-all"
+        className="relative flex flex-col items-center justify-center mx-auto transition-all rounded-full"
         style={{
+          width: 52,
+          height: 52,
           background:
             "linear-gradient(160deg, oklch(0.22 0.07 240), oklch(0.15 0.05 240))",
-          border: "2px solid oklch(0.73 0.1 75)",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+          border: "2.5px solid oklch(0.73 0.1 75)",
+          boxShadow: "0 2px 10px rgba(0,0,0,0.55)",
           cursor: "pointer",
         }}
         onClick={(e) => {
@@ -1099,52 +1371,71 @@ function FilledMarker({
           setShowActions((v) => !v);
         }}
       >
+        {/* Jersey number — small, top */}
         <span
-          className="text-base font-black"
-          style={{ color: "oklch(0.94 0.01 240)", lineHeight: 1 }}
-        >
-          {player.jerseyNumber.toString()}
-        </span>
-      </button>
-
-      <div
-        className="mt-0.5 px-1 py-0.5 rounded text-center"
-        style={{
-          background: "rgba(0,0,0,0.65)",
-          backdropFilter: "blur(4px)",
-          maxWidth: 60,
-          marginLeft: "50%",
-          transform: "translateX(-50%)",
-        }}
-      >
-        <span
-          className="font-bold block truncate"
           style={{
             fontSize: 9,
-            color: "oklch(0.94 0.01 240)",
-            lineHeight: 1.3,
+            fontWeight: 700,
+            color: "oklch(0.73 0.1 75)",
+            lineHeight: 1,
+            marginBottom: 1,
           }}
         >
-          {player.name.split(" ").pop()}
+          #{player.jerseyNumber.toString()}
         </span>
-      </div>
+        {/* First name — large, center */}
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 900,
+            color: "oklch(0.97 0.01 240)",
+            lineHeight: 1,
+            maxWidth: 44,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            display: "block",
+          }}
+        >
+          {first}
+        </span>
+        {/* Last initial — tiny, bottom */}
+        {lastInitial && (
+          <span
+            style={{
+              fontSize: 8,
+              fontWeight: 500,
+              color: "oklch(0.68 0.03 240)",
+              lineHeight: 1,
+              marginTop: 1,
+            }}
+          >
+            {lastInitial}
+          </span>
+        )}
+      </button>
     </div>
   );
 }
 
+// ─── EmptySlot ───────────────────────────────────────────────────────────────
 function EmptySlot({ label, isTarget }: { label: string; isTarget: boolean }) {
   return (
     <div
       className="relative select-none"
-      style={{ width: 44, textAlign: "center" }}
+      style={{ width: 52, textAlign: "center" }}
     >
       <div
-        className="w-11 h-11 rounded-full flex items-center justify-center mx-auto transition-all"
+        className="rounded-full flex items-center justify-center mx-auto transition-all"
         style={{
+          width: 52,
+          height: 52,
           background: isTarget
             ? "oklch(0.73 0.1 75 / 0.15)"
             : "rgba(0,0,0,0.25)",
-          border: `2px dashed ${isTarget ? "oklch(0.73 0.1 75)" : "rgba(255,255,255,0.25)"}`,
+          border: `2px dashed ${
+            isTarget ? "oklch(0.73 0.1 75)" : "rgba(255,255,255,0.25)"
+          }`,
         }}
       >
         <span
