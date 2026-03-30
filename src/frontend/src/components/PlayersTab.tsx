@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -62,6 +63,12 @@ export default function PlayersTab() {
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
   const [form, setForm] = useState<PlayerForm>(emptyForm());
   const [deleteId, setDeleteId] = useState<PlayerId | null>(null);
+
+  // Bulk select state
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const openAdd = () => {
     setEditingPlayer(null);
@@ -130,6 +137,26 @@ export default function PlayersTab() {
     }
   };
 
+  const handleBulkDelete = async () => {
+    setIsBulkDeleting(true);
+    try {
+      const ids = sortedPlayers
+        .filter((p) => selectedIds.has(p.id.toString()))
+        .map((p) => p.id);
+      await Promise.all(ids.map((id) => deletePlayer.mutateAsync(id)));
+      toast.success(
+        `Removed ${ids.length} player${ids.length !== 1 ? "s" : ""}`,
+      );
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch {
+      toast.error("Failed to delete some players");
+    } finally {
+      setIsBulkDeleting(false);
+      setBulkDeleteOpen(false);
+    }
+  };
+
   const togglePosition = (pos: string) => {
     setForm((prev) => ({
       ...prev,
@@ -139,9 +166,35 @@ export default function PlayersTab() {
     }));
   };
 
+  const toggleSelectPlayer = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
   const sortedPlayers = [...(players || [])].sort(
     (a, b) => Number(a.jerseyNumber) - Number(b.jerseyNumber),
   );
+
+  const allSelected =
+    sortedPlayers.length > 0 &&
+    sortedPlayers.every((p) => selectedIds.has(p.id.toString()));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(sortedPlayers.map((p) => p.id.toString())));
+    }
+  };
 
   const isSaving = addPlayer.isPending || updatePlayer.isPending;
 
@@ -157,20 +210,94 @@ export default function PlayersTab() {
             {players?.length ?? 0} squad members
           </p>
         </div>
-        <Button
-          data-ocid="players.add_button"
-          onClick={openAdd}
-          className="h-10 px-4 rounded-lg"
-          style={{
-            background:
-              "linear-gradient(135deg, oklch(0.78 0.1 75), oklch(0.62 0.1 75))",
-            color: "oklch(0.12 0.03 240)",
-          }}
-        >
-          <Plus size={16} className="mr-1.5" />
-          Add Player
-        </Button>
+        <div className="flex items-center gap-2">
+          {selectMode ? (
+            <>
+              {selectedIds.size > 0 && (
+                <Button
+                  data-ocid="players.delete_button"
+                  onClick={() => setBulkDeleteOpen(true)}
+                  className="h-10 px-4 rounded-lg"
+                  style={{
+                    background: "oklch(0.45 0.2 27)",
+                    color: "white",
+                  }}
+                >
+                  <Trash2 size={14} className="mr-1.5" />
+                  Delete ({selectedIds.size})
+                </Button>
+              )}
+              <Button
+                data-ocid="players.cancel_button"
+                variant="outline"
+                onClick={exitSelectMode}
+                className="h-10 px-4 rounded-lg"
+                style={{
+                  borderColor: "oklch(0.35 0.04 240)",
+                  color: "oklch(0.68 0.03 240)",
+                  background: "transparent",
+                }}
+              >
+                <X size={14} className="mr-1.5" />
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                data-ocid="players.select.toggle"
+                variant="outline"
+                onClick={() => setSelectMode(true)}
+                className="h-10 px-4 rounded-lg"
+                style={{
+                  borderColor: "oklch(0.35 0.04 240)",
+                  color: "oklch(0.68 0.03 240)",
+                  background: "transparent",
+                }}
+              >
+                Select
+              </Button>
+              <Button
+                data-ocid="players.add_button"
+                onClick={openAdd}
+                className="h-10 px-4 rounded-lg"
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.78 0.1 75), oklch(0.62 0.1 75))",
+                  color: "oklch(0.12 0.03 240)",
+                }}
+              >
+                <Plus size={16} className="mr-1.5" />
+                Add Player
+              </Button>
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Select-all row */}
+      {selectMode && sortedPlayers.length > 0 && (
+        <div
+          className="flex items-center gap-3 px-4 py-2 mb-2 rounded-lg"
+          style={{ background: "oklch(0.20 0.04 240)" }}
+        >
+          <Checkbox
+            id="select-all"
+            data-ocid="players.checkbox"
+            checked={allSelected}
+            onCheckedChange={toggleSelectAll}
+          />
+          <label
+            htmlFor="select-all"
+            className="text-sm cursor-pointer"
+            style={{ color: "oklch(0.68 0.03 240)" }}
+          >
+            {allSelected
+              ? "Deselect all"
+              : `Select all (${sortedPlayers.length})`}
+          </label>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="space-y-2" data-ocid="players.loading_state">
@@ -194,72 +321,94 @@ export default function PlayersTab() {
         </div>
       ) : (
         <div className="space-y-2" data-ocid="players.list">
-          {sortedPlayers.map((player, idx) => (
-            <motion.div
-              key={player.id.toString()}
-              data-ocid={`players.item.${idx + 1}`}
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: idx * 0.03 }}
-              className="flex items-center gap-3 px-4 py-3 rounded-xl border border-border"
-              style={{ background: "oklch(0.17 0.04 240)" }}
-            >
-              <div
-                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm"
+          {sortedPlayers.map((player, idx) => {
+            const idStr = player.id.toString();
+            const isChecked = selectedIds.has(idStr);
+            return (
+              <motion.div
+                key={idStr}
+                data-ocid={`players.item.${idx + 1}`}
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: idx * 0.03 }}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors"
                 style={{
-                  background: "oklch(0.14 0.04 240)",
-                  border: "2px solid oklch(0.73 0.1 75)",
-                  color: "oklch(0.73 0.1 75)",
+                  background: isChecked
+                    ? "oklch(0.20 0.05 240)"
+                    : "oklch(0.17 0.04 240)",
+                  borderColor: isChecked
+                    ? "oklch(0.45 0.1 75)"
+                    : "oklch(0.25 0.04 240)",
                 }}
               >
-                {player.jerseyNumber.toString()}
-              </div>
+                {selectMode && (
+                  <Checkbox
+                    data-ocid={`players.checkbox.${idx + 1}`}
+                    checked={isChecked}
+                    onCheckedChange={() => toggleSelectPlayer(idStr)}
+                    className="flex-shrink-0"
+                  />
+                )}
 
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-foreground truncate">
-                  {player.name}
-                </p>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {player.positions.map((pos) => (
-                    <Badge
-                      key={pos}
-                      className="text-xs px-1.5 py-0 h-4"
-                      style={{
-                        background: "oklch(0.25 0.04 240)",
-                        color: "oklch(0.73 0.1 75)",
-                        border: "none",
-                      }}
-                    >
-                      {pos}
-                    </Badge>
-                  ))}
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm"
+                  style={{
+                    background: "oklch(0.14 0.04 240)",
+                    border: "2px solid oklch(0.73 0.1 75)",
+                    color: "oklch(0.73 0.1 75)",
+                  }}
+                >
+                  {player.jerseyNumber.toString()}
                 </div>
-              </div>
 
-              <div className="flex items-center gap-1">
-                <Button
-                  data-ocid={`players.edit_button.${idx + 1}`}
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  onClick={() => openEdit(player)}
-                  style={{ color: "oklch(0.68 0.03 240)" }}
-                >
-                  <Pencil size={14} />
-                </Button>
-                <Button
-                  data-ocid={`players.delete_button.${idx + 1}`}
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  onClick={() => setDeleteId(player.id)}
-                  style={{ color: "oklch(0.577 0.245 27.325)" }}
-                >
-                  <Trash2 size={14} />
-                </Button>
-              </div>
-            </motion.div>
-          ))}
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-foreground truncate">
+                    {player.name}
+                  </p>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {player.positions.map((pos) => (
+                      <Badge
+                        key={pos}
+                        className="text-xs px-1.5 py-0 h-4"
+                        style={{
+                          background: "oklch(0.25 0.04 240)",
+                          color: "oklch(0.73 0.1 75)",
+                          border: "none",
+                        }}
+                      >
+                        {pos}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+
+                {!selectMode && (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      data-ocid={`players.edit_button.${idx + 1}`}
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() => openEdit(player)}
+                      style={{ color: "oklch(0.68 0.03 240)" }}
+                    >
+                      <Pencil size={14} />
+                    </Button>
+                    <Button
+                      data-ocid={`players.delete_button.${idx + 1}`}
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() => setDeleteId(player.id)}
+                      style={{ color: "oklch(0.577 0.245 27.325)" }}
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </div>
+                )}
+              </motion.div>
+            );
+          })}
         </div>
       )}
 
@@ -392,6 +541,7 @@ export default function PlayersTab() {
         </DialogContent>
       </Dialog>
 
+      {/* Single delete confirmation */}
       <AlertDialog
         open={deleteId !== null}
         onOpenChange={(o) => !o && setDeleteId(null)}
@@ -422,6 +572,49 @@ export default function PlayersTab() {
               className="bg-destructive text-destructive-foreground"
             >
               Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk delete confirmation */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent
+          data-ocid="players.modal"
+          style={{
+            background: "oklch(0.17 0.04 240)",
+            border: "1px solid oklch(0.25 0.04 240)",
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {selectedIds.size} Player
+              {selectedIds.size !== 1 ? "s" : ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription style={{ color: "oklch(0.68 0.03 240)" }}>
+              This will permanently remove {selectedIds.size} player
+              {selectedIds.size !== 1 ? "s" : ""} from your squad. This cannot
+              be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              data-ocid="players.cancel_button"
+              style={{ background: "oklch(0.22 0.04 240)", border: "none" }}
+              disabled={isBulkDeleting}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-ocid="players.confirm_button"
+              onClick={handleBulkDelete}
+              className="bg-destructive text-destructive-foreground"
+              disabled={isBulkDeleting}
+            >
+              {isBulkDeleting && (
+                <Loader2 size={14} className="mr-2 animate-spin" />
+              )}
+              Remove All
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

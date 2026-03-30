@@ -1,97 +1,15 @@
 import { Toaster } from "@/components/ui/sonner";
-import { useQueryClient } from "@tanstack/react-query";
 import { Calendar, Layout, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import LineupTab from "./components/LineupTab";
 import MatchesTab from "./components/MatchesTab";
 import PlayersTab from "./components/PlayersTab";
-import { useActor } from "./hooks/useActor";
-import { useGetPlayers } from "./hooks/useQueries";
 
 type Tab = "players" | "matches" | "lineup";
 
-const SEED_PLAYERS = [
-  {
-    name: "Alex Morgan",
-    jerseyNumber: 1,
-    positions: ["GK"],
-    notes: "First choice keeper",
-  },
-  { name: "Sam Wilson", jerseyNumber: 2, positions: ["RB"], notes: "" },
-  { name: "Chris Davis", jerseyNumber: 5, positions: ["CB"], notes: "Captain" },
-  { name: "Jordan Lee", jerseyNumber: 6, positions: ["CB"], notes: "" },
-  { name: "Marcus Johnson", jerseyNumber: 3, positions: ["LB"], notes: "" },
-  {
-    name: "Tyler Brown",
-    jerseyNumber: 8,
-    positions: ["CM"],
-    notes: "Engine of the team",
-  },
-  { name: "Ryan Garcia", jerseyNumber: 4, positions: ["CDM"], notes: "" },
-  {
-    name: "Jamie Smith",
-    jerseyNumber: 10,
-    positions: ["CAM"],
-    notes: "Playmaker",
-  },
-  { name: "Lucas White", jerseyNumber: 7, positions: ["RM", "RW"], notes: "" },
-  {
-    name: "Ethan Taylor",
-    jerseyNumber: 11,
-    positions: ["LM", "LW"],
-    notes: "",
-  },
-  {
-    name: "Oliver Martinez",
-    jerseyNumber: 9,
-    positions: ["ST"],
-    notes: "Top scorer",
-  },
-  { name: "Liam Anderson", jerseyNumber: 17, positions: ["RW"], notes: "" },
-  { name: "Noah Thompson", jerseyNumber: 16, positions: ["LW"], notes: "" },
-  {
-    name: "Mason Harris",
-    jerseyNumber: 19,
-    positions: ["CF", "ST"],
-    notes: "",
-  },
-  {
-    name: "Aiden Clark",
-    jerseyNumber: 12,
-    positions: ["GK"],
-    notes: "Backup keeper",
-  },
-  {
-    name: "James Robinson",
-    jerseyNumber: 14,
-    positions: ["CB", "CDM"],
-    notes: "",
-  },
-];
-
-function useSeedData() {
-  const { actor } = useActor();
-  const { data: players } = useGetPlayers();
-  const qc = useQueryClient();
-
-  useEffect(() => {
-    if (!actor || players === undefined || players.length > 0) return;
-    const seed = async () => {
-      await Promise.all(
-        SEED_PLAYERS.map((p) =>
-          actor.addPlayer(p.name, BigInt(p.jerseyNumber), p.positions, p.notes),
-        ),
-      );
-      qc.invalidateQueries({ queryKey: ["players"] });
-    };
-    seed();
-  }, [actor, players, qc]);
-}
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("lineup");
-  useSeedData();
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "players", label: "Players", icon: <Users size={18} /> },
