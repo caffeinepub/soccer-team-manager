@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("/assets/fonts/PlusJakartaSans.woff2") format("woff2");
+}
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+    /* Dark broadcast theme - always dark */
+    --background: 0.12 0.03 240;
+    --foreground: 0.94 0.01 240;
+    --card: 0.17 0.04 240;
+    --card-foreground: 0.94 0.01 240;
+    --popover: 0.19 0.045 240;
+    --popover-foreground: 0.94 0.01 240;
+    --primary: 0.73 0.1 75;
+    --primary-foreground: 0.12 0.03 240;
+    --secondary: 0.2 0.04 240;
+    --secondary-foreground: 0.94 0.01 240;
+    --muted: 0.2 0.04 240;
+    --muted-foreground: 0.68 0.03 240;
+    --accent: 0.22 0.04 240;
+    --accent-foreground: 0.94 0.01 240;
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 0.985 0 0;
+    --border: 0.25 0.04 240;
+    --input: 0.22 0.04 240;
+    --ring: 0.73 0.1 75;
+    --chart-1: 0.73 0.1 75;
+    --chart-2: 0.55 0.15 145;
+    --chart-3: 0.55 0.15 200;
+    --chart-4: 0.7 0.15 30;
+    --chart-5: 0.68 0.03 240;
+    --sidebar: 0.15 0.035 240;
+    --sidebar-foreground: 0.94 0.01 240;
+    --sidebar-primary: 0.73 0.1 75;
+    --sidebar-primary-foreground: 0.12 0.03 240;
+    --sidebar-accent: 0.2 0.04 240;
+    --sidebar-accent-foreground: 0.94 0.01 240;
+    --sidebar-border: 0.25 0.04 240;
+    --sidebar-ring: 0.73 0.1 75;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Pitch drag interaction */
+.pitch-container {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.player-marker {
+  touch-action: none;
+  cursor: grab;
+}
+
+.player-marker:active {
+  cursor: grabbing;
+}
+
+/* Gold gradient button */
+.btn-gold {
+  background: linear-gradient(135deg, oklch(0.78 0.1 75), oklch(0.66 0.1 75));
+  color: oklch(0.12 0.03 240);
+  font-weight: 700;
+}
+
+.btn-gold:hover {
+  background: linear-gradient(135deg, oklch(0.82 0.1 75), oklch(0.7 0.1 75));
+}
+
+/* Grass bands on pitch */
+.grass-band-light {
+  fill: oklch(0.3 0.1 145);
+}
+
+.grass-band-dark {
+  fill: oklch(0.27 0.1 145);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0.04 240);
+  border-radius: 2px;
+}
