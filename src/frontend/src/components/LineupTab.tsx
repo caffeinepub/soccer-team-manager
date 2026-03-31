@@ -1319,6 +1319,40 @@ function FilledMarker({
       className="relative select-none"
       style={{ width: 52, textAlign: "center" }}
     >
+      {/* Always-visible × remove button */}
+      <button
+        type="button"
+        data-ocid="lineup.player.delete_button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove(e);
+        }}
+        title="Remove from pitch"
+        style={{
+          position: "absolute",
+          top: -5,
+          right: -5,
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          background: "oklch(0.577 0.245 27.325)",
+          color: "white",
+          border: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 10,
+          fontWeight: 900,
+          lineHeight: 1,
+          zIndex: 30,
+          cursor: "pointer",
+          padding: 0,
+          boxShadow: "0 1px 4px rgba(0,0,0,0.5)",
+        }}
+      >
+        ×
+      </button>
+
       {showActions && (
         <div
           className="absolute bottom-full left-1/2 mb-1 flex gap-1 rounded-lg px-1.5 py-1 z-30"
@@ -1331,7 +1365,11 @@ function FilledMarker({
         >
           <button
             type="button"
-            onClick={onBench}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowActions(false);
+              onBench(e);
+            }}
             className="text-xs px-2 py-0.5 rounded"
             style={{
               color: "oklch(0.73 0.1 75)",
@@ -1339,17 +1377,6 @@ function FilledMarker({
             }}
           >
             Bench
-          </button>
-          <button
-            type="button"
-            onClick={onRemove}
-            className="text-xs px-2 py-0.5 rounded"
-            style={{
-              color: "oklch(0.577 0.245 27.325)",
-              background: "oklch(0.20 0.04 240)",
-            }}
-          >
-            Remove
           </button>
         </div>
       )}
