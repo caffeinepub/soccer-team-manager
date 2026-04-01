@@ -1323,6 +1323,7 @@ function FilledMarker({
       <button
         type="button"
         data-ocid="lineup.player.delete_button"
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           onRemove(e);
